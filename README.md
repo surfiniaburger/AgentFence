@@ -71,3 +71,25 @@ do not re-register the same tool names. Registration is owned by one
 This is important because WebMCP tool names are unique within the page's
 registry. Re-registering the same names on every React state update causes
 `InvalidStateError: Duplicate tool name`.
+
+
+## Adversarial demo
+
+Use **Simulate Attack** to model the critical boundary:
+
+1. The agent reads `src/notes.txt`.
+2. The repository contains text attempting to influence the agent.
+3. The simulated agent attempts `apply_fix`.
+4. AgentFence independently classifies `apply_fix` as HIGH risk.
+5. The tool remains pending until the human approves or denies it.
+6. Approval applies only the displayed patch.
+7. Verification can then produce the security receipt.
+
+This is deliberately framed as an attack simulation, not a claim that WebMCP
+itself prevents prompt injection.
+
+## WebMCP agent layer
+
+The app now includes a transparent browser-side WebMCP test harness. It discovers the actual registered tools with `document.modelContext.getTools()` and executes the remediation sequence with `document.modelContext.executeTool()`. This is not an LLM simulator: each call traverses the same WebMCP registration/execution boundary exposed to a WebMCP-aware external agent.
+
+The harness intentionally stops when `apply_fix` reaches AgentFence's consequential boundary. The human then approves or denies the action in the control plane. Approval is deliberately not exposed as an agent tool.
