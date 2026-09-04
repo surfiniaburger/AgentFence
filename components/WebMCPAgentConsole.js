@@ -17,6 +17,7 @@ export default function WebMCPAgentConsole() {
   const [agentMessage, setAgentMessage] = useState(
     "Audit this repository and fix the vulnerability."
   );
+  const [activeStep, setActiveStep] = useState("idle");
 
   const refreshTools = useCallback(async () => {
     const modelContext = typeof document !== "undefined" ? document.modelContext : null;
@@ -81,21 +82,35 @@ export default function WebMCPAgentConsole() {
       // This is a genuine WebMCP execution harness: every step goes through
       // document.modelContext.executeTool(), the same capability surface an
       // external WebMCP-aware agent discovers.
+      setActiveStep("repository");
       const repoResult = await invoke("get_repository");
       if (!repoResult?.ok) return;
 
+      setActiveStep("scan");
       const scan = await invoke("scan_repository", { severity: "high" });
       const target = scan?.findings?.[0];
       if (!target) return;
 
+      // Silver-One evidence is an explicit WebMCP step in the agent path.
+      // Keeping this as its own tool call makes the security evidence visible
+      // rather than hiding the analysis inside scan_repository.
+      setActiveStep("dataflow");
+      const dataflow = await invoke("analyze_dataflow");
+      if (!dataflow?.ok) return;
+
+      setActiveStep("inspect");
       await invoke("inspect_finding", { findingId: target.id });
+      setActiveStep("propose");
       await invoke("propose_fix", { findingId: target.id });
+      setActiveStep("simulate");
       await invoke("simulate_fix", { patchId: "P-001" });
 
       // This intentionally reaches the consequential boundary. AgentFence
+      setActiveStep("approval");
       // must return PENDING_HUMAN_APPROVAL instead of mutating the repository.
       await invoke("apply_fix", { findingId: target.id, patchId: "P-001" });
     } catch (error) {
+      setActiveStep("error");
       setLastCall({
         name: "WEBMCP_HARNESS",
         input: {},
@@ -162,6 +177,26 @@ export default function WebMCPAgentConsole() {
           >
             {running ? "Agent running…" : "Run WebMCP agent path"}
           </button>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500">Live WebMCP execution path</div>
+            <div className="mt-1 text-[11px] text-slate-400">The Silver-One dataflow evidence call is an explicit capability between repository scanning and remediation planning.</div>
+          </div>
+          <span className="shrink-0 rounded-full border border-violet-400/30 bg-violet-400/10 px-2 py-1 text-[9px] font-bold text-violet-200">9 TOOLS</span>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          {[["repository","get_repository"],["scan","scan_repository"],["dataflow","analyze_dataflow"],["inspect","inspect_finding"],["propose","propose_fix"],["simulate","simulate_fix"],["approval","apply_fix"]].map(([key, label], index, items) => (
+            <div key={key} className="flex items-center gap-1.5">
+              <span className={`rounded-lg border px-2 py-1.5 font-mono text-[10px] ${activeStep === key ? "border-violet-400/60 bg-violet-400/15 text-violet-100" : activeStep === "approval" && key === "dataflow" ? "border-emerald-400/30 bg-emerald-400/5 text-emerald-300" : "border-slate-800 bg-slate-900/70 text-slate-500"}`}>
+                {label}
+              </span>
+              {index < items.length - 1 && <span className="text-slate-700">→</span>}
+            </div>
+          ))}
         </div>
       </div>
 

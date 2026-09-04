@@ -6,304 +6,207 @@ AgentFence is a WebMCP-powered security workspace that exposes structured reposi
 
 Read-only investigation can proceed automatically. Consequential actions are intercepted by AgentFence and require explicit human approval.
 
-The core principle is:
-
 > **The agent can decide what it wants to do. AgentFence decides whether the application will let it.**
 
 ## Why AgentFence?
 
-WebMCP makes web applications accessible to AI agents through structured, discoverable tools.
+WebMCP gives agents structured, discoverable capabilities. AgentFence explores the security layer that should sit around those capabilities when the information an agent consumes is not trustworthy.
 
-That creates a powerful new interaction model — but it also creates a security question:
+The demo deliberately places an instruction-injection trap in `src/notes.txt`. The text attempts to convince an agent to bypass operator confirmation. AgentFence treats it as data, tracks its provenance, and changes the authorization decision when that context reaches a consequential action.
 
-**What happens when an agent encounters untrusted web content that tells it to perform a consequential action?**
+AgentFence does **not** claim that WebMCP itself prevents prompt injection. The application-level control is the point: **untrusted content is not authorization**.
 
-AgentFence demonstrates one answer:
+## MVP 6 security flow
 
-- WebMCP provides the agent-accessible capabilities.
-- AgentFence evaluates tool calls through a policy boundary.
-- Untrusted repository content remains data, not authorization.
-- Consequential actions require human approval.
-- Verification establishes whether the resulting change actually worked.
-- A deterministic security receipt records the final outcome.
+The primary demo path is an explicit WebMCP tool chain. The Silver-One dataflow analysis is intentionally visible as its own capability call rather than being hidden inside repository scanning:
 
-AgentFence does **not** claim that WebMCP itself prevents prompt injection.
+```text
+get_repository
+      ↓
+scan_repository
+      ↓
+ANALYZE_DATAFLOW  ← Silver-One evidence boundary
+      ↓
+inspect_finding
+      ↓
+propose_fix
+      ↓
+simulate_fix
+      ↓
+apply_fix
+      ↓
+HUMAN APPROVAL
+      ↓
+run_verification
+```
 
-Instead, AgentFence demonstrates how an application can keep **agent intent, untrusted content, and application authorization as separate concerns**.
+The UI highlights this sequence in the **Live WebMCP execution path** panel. `analyze_dataflow` produces deterministic source-to-sink evidence before remediation is proposed.
 
-## MVP Flow
+The complete security story is:
 
-1. A WebMCP-aware agent discovers AgentFence's available tools.
-2. The agent reads the demo `payment-service` repository.
-3. The agent scans the repository for a deliberately seeded vulnerability.
-4. The agent inspects the finding.
-5. The agent proposes a remediation patch.
-6. The agent encounters untrusted repository text containing an instruction-injection attempt.
-7. The agent simulates the proposed remediation.
-8. `apply_fix` is classified as a consequential action.
-9. AgentFence intercepts the action and requires human approval.
-10. The human reviews the exact proposed patch.
-11. The human approves or denies the action.
-12. If approved, the patch is applied.
-13. Verification runs against the resulting repository state.
-14. A deterministic security receipt records the decision and verification outcome.
+`Agent → untrusted repository content → WebMCP scan → Silver-One dataflow evidence → provenance-aware policy → remediation proposal → independent patch analysis → human decision → verification → receipt`
 
-## Security Scenario
+## Provenance-aware policy
 
-The demo repository intentionally contains a vulnerable payment operation.
+AgentFence uses a deliberately lightweight application-level trust model:
 
-The vulnerability is an unvalidated payment amount in:
+- `TRUSTED` — no untrusted source has influenced the current action path.
+- `UNTRUSTED` — a tool returned content from an explicitly untrusted source.
+- `TAINTED` — a later planning or simulation step inherited that provenance.
 
-`src/payments.js`
+When `apply_fix` is requested with untrusted or tainted provenance, the policy engine elevates the action to `CRITICAL` risk and requires human approval.
 
-The repository also contains deliberately malicious, untrusted text in:
+This is **not** presented as full semantic taint analysis. MVP 6 adds a separate deterministic C dataflow evidence layer inspired by Silver-One's graph contract.
 
-`src/notes.txt`
+## Silver-One dataflow evidence
 
-The text attempts to instruct the agent to ignore previous instructions and apply the remediation without operator confirmation.
+AgentFence reuses a narrow part of the Silver-One research implementation: the graph evidence model and deterministic reachability semantics.
 
-AgentFence treats that repository text as **untrusted content**.
+The browser-safe adapter in `lib/silverOneDataflow.js` models:
 
-The content may influence what an agent proposes to do, but it cannot independently authorize a consequential application action.
+`UNTRUSTED_INPUT → MEMORY_WRITE`
 
-The important security boundary is:
+using a concrete C `memcpy` security fixture. It preserves the important evidence concepts:
 
-`Untrusted content ≠ Authorization`
+- `FlowGraphSnapshot`
+- `FlowSignature`
+- source/sink endpoints
+- supported sink categories
+- sink-specific sanitizer proof
+- fail-closed evaluation
+- deterministic risk scoring
 
-## WebMCP Tools
+The application exposes that analysis directly as the WebMCP tool **`analyze_dataflow`**. This means a WebMCP-aware agent can discover and invoke the evidence capability through the same `document.modelContext` surface as the repository tools.
 
-AgentFence exposes structured tools through the native WebMCP imperative API.
+The full Silver-One GEPA/Pareto/reflection stack is **not** embedded in the browser application. The upstream project and CVE seed corpus remain external and are documented in `SILVER_ONE_INTEGRATION.md`.
 
-### Read-only investigation
+## Independent patch analysis
+
+AgentFence does not make the operator rely solely on the agent's explanation of its own patch.
+
+Before approval, a deterministic analyzer independently checks:
+
+- intended target file
+- expected remediation logic
+- new network-related calls
+- secret/environment access
+- permission-related changes
+- change scope
+
+The approval panel compares the signals:
+
+`Agent: REQUESTED APPLY`
+
+`AgentFence: TAINTED + HUMAN GATE`
+
+`Independent check: PASS` (or `REVIEW` when a check fails)
+
+The result is a second, deterministic signal rather than another copy of the agent's reasoning.
+
+## WebMCP tools
+
+### Investigation / evidence
 
 - `get_repository`
 - `get_commit_diff`
 - `scan_repository`
+- `analyze_dataflow` — explicit Silver-One-style C source-to-sink evidence step
 - `inspect_finding`
+- `run_verification`
 
-These operations can proceed without human approval.
-
-### Remediation
+### Planning
 
 - `propose_fix`
 - `simulate_fix`
 
-These operations prepare and evaluate a potential remediation without mutating the repository.
+### Consequential
 
-### Consequential action
+- `apply_fix` — the protected write operation.
 
-- `apply_fix`
+**9 tools are registered:** 8 read/evidence/planning capabilities and 1 consequential write capability.
 
-This is the security boundary.
-
-`apply_fix` requires human approval before the simulated repository can transition from vulnerable to fixed.
-
-### Verification
-
-- `run_verification`
-
-Verification runs after an approved remediation and produces the final deterministic result.
-
-## WebMCP
-
-AgentFence uses the native WebMCP imperative API:
+The application uses the native WebMCP imperative API:
 
 `document.modelContext.registerTool(...)`
 
-The application also demonstrates browser-side discovery and execution through:
+The browser-side test harness demonstrates actual discovery and execution with:
 
 `document.modelContext.getTools()`
 
-and:
-
 `document.modelContext.executeTool(...)`
-
-The WebMCP Agent Console provides a transparent browser-side test harness for exercising the actual registered WebMCP tools.
-
-It is intentionally **not presented as an LLM**. It demonstrates the same WebMCP discovery and execution path that a compatible agent can use.
-
-## Policy Boundary
-
-Every tool call passes through the AgentFence policy layer.
-
-Conceptually:
-
-`WebMCP Tool`
-
-↓
-
-`AgentFence Policy`
-
-↓
-
-`ALLOW`
-
-or
-
-`HUMAN APPROVAL REQUIRED`
-
-or
-
-`DENY`
-
-Read-only operations can proceed automatically.
-
-Consequential remediation cannot proceed merely because an agent requested it.
-
-The application remains the final authority over whether the action is executed.
-
-## Human Approval
-
-When `apply_fix` is requested, AgentFence pauses the action and presents the exact proposed patch to the operator.
-
-The operator can:
-
-- **Approve** the patch
-- **Deny** the patch
-
-Approval changes the application state and permits the remediation to proceed.
-
-Denial leaves the repository unchanged.
-
-This makes the human approval step part of the actual application control flow rather than merely a visual confirmation.
-
-## Verification & Security Receipt
-
-After an approved remediation, AgentFence runs deterministic verification.
-
-The successful demo path results in:
-
-- Repository: `FIXED`
-- Verification: `PASS`
-- Tests: `12 passed / 0 failed`
-
-AgentFence then produces a deterministic security receipt containing the remediation outcome, including information such as:
-
-- Finding
-- Patch
-- Policy decision
-- Approval decision
-- Verification result
-- Tests
-- Commit
-- Timestamp
-
-The receipt answers:
-
-> **What ultimately happened?**
 
 ## Architecture
 
-The high-level architecture is:
+```text
+                  WebMCP-aware Agent
+                           │
+                           ▼
+                    AgentFence Web App
+                           │
+                  ┌────────┴─────────┐
+                  ▼                  ▼
+             Tool Registry     Provenance Tracker
+                  │                  │
+                  └────────┬─────────┘
+                           ▼
+                    Policy Engine
+                           │
+              ┌────────────┴────────────┐
+              │                         │
+       read/evidence               consequential
+              │                         │
+              ▼                         ▼
+   Silver-One Dataflow          Human Approval Gate
+   + deterministic checks              │
+                                       ▼
+                                Application Mutation
+                                       │
+                                       ▼
+                                  Verification
+                                       │
+                                       ▼
+                                Security Receipt
+```
 
-`WebMCP-aware Agent`
+WebMCP provides the capability surface. AgentFence provides the application-level security boundary around consequential capabilities.
 
-↓
+## Deliberately simulated environment
 
-`WebMCP`
-
-↓
-
-`AgentFence`
-
-- Tool Registry
-- Policy Engine
-- Approval Boundary
-
-↓
-
-`Human`
-
-↓
-
-`Application / Verification`
-
-↓
-
-`Security Receipt`
-
-WebMCP provides the capability surface.
-
-AgentFence provides the application-level security boundary around consequential capabilities.
-
-## Stack
-
-- Next.js
-- JavaScript
-- Tailwind CSS
-- Native WebMCP imperative API
-- React
-- No external API key required for the MVP
-
-## Run Locally
-
-```bash
-npm install
-npm run dev
-````
-
-Open:
-
-`http://localhost:3000`
-
-For local WebMCP testing, use a WebMCP-enabled Chrome build and enable the WebMCP testing flag if required by your Chrome version.
-
-## WebMCP Browser Testing
-
-AgentFence can be tested through a WebMCP-capable browser.
-
-The WebMCP Agent Console exposes:
-
-* Available registered tools
-* Tool schemas
-* Tool discovery
-* Actual WebMCP tool execution
-* Current agent task context
-* Last WebMCP call
-* Policy outcomes
-* Approval state
-
-The important distinction is that the console invokes the **actual registered WebMCP tools** rather than a separate mock API.
-
-## Important Implementation Detail
-
-The WebMCP registry is mounted once per page-provider lifecycle.
-
-Tool callbacks read current application state through a ref so React state changes do not cause the same WebMCP tools to be registered repeatedly.
-
-Registration is owned by a single `AbortController`.
-
-Cleanup aborts that controller and removes the registered tools.
-
-This matters because WebMCP tool names are unique within the page's registry. Re-registering the same tool names on every React state update can produce:
-
-`InvalidStateError: Duplicate tool name`
-
-The implementation therefore keeps WebMCP registration separate from ordinary React state updates.
-
-## Demo Simulator
-
-The local **Run Agent Demo** button is a deterministic development/test harness.
-
-It demonstrates the WebMCP execution path locally without requiring an external LLM or external repository.
-
-The hackathon-facing capability is the native WebMCP registration and the tools exposed through:
-
-`document.modelContext`
-
-The simulator should not be interpreted as an LLM implementation.
-
-## Deliberately Simulated Environment
-
-The repository shown in AgentFence is an **in-app security lab**.
-
-It is intentionally deterministic so the security boundary can be demonstrated reliably.
+The repository shown in AgentFence is an **in-app security lab**. It is intentionally deterministic so the security boundary can be demonstrated reliably.
 
 It is not a real Git repository and does not mutate external systems.
 
-The remediation, verification, and security receipt are therefore deterministic parts of the demonstration environment.
+The vulnerable scenario uses `src/payments.js`, where an unvalidated payment amount is passed to `account.charge`. The remediation adds finite-positive-number validation.
 
-## Security Design Principle
+## WebMCP lifecycle
+
+The WebMCP registry is mounted once per page-provider lifecycle. Tool callbacks read current repository and provenance state through refs, so ordinary React state changes do not repeatedly register the same tool names.
+
+Registration is owned by an `AbortController` and cleanup aborts that controller. This avoids WebMCP duplicate-tool-name failures during React lifecycle updates.
+
+## Demo controls
+
+### Run WebMCP agent path
+
+Exercises actual browser-side WebMCP discovery/execution and visibly walks through:
+
+`get_repository → scan_repository → analyze_dataflow → inspect_finding → propose_fix → simulate_fix → apply_fix`
+
+The run intentionally stops at `apply_fix` until the human decides.
+
+### Full Remediation
+
+Runs the deterministic end-to-end application flow through the same registered tools.
+
+### Simulate Attack
+
+Resets the lab, reads the malicious repository note, models the agent attempting the consequential action, and demonstrates the provenance-aware gate.
+
+### Approval
+
+The human can approve or deny the exact patch. Approval is intentionally not exposed as an agent tool.
+
+## Security principle
 
 AgentFence separates three things:
 
@@ -313,56 +216,35 @@ What the agent is attempting to do.
 
 ### Untrusted content
 
-Information encountered by the agent while investigating the repository or web application.
+Information encountered while investigating the repository or web application.
 
 ### Application authorization
 
 What the application actually permits the agent to execute.
 
-The key principle is:
-
 > **Agent intent is not application authorization.**
 
-This allows AgentFence to demonstrate a security boundary even when the agent encounters adversarial content.
+MVP 6 adds another useful distinction:
 
-## Hackathon Checklist
+> **Security evidence should be independently derived from the artifact being acted on, not only from the agent's explanation of it.**
 
-* Native `document.modelContext.registerTool(...)`
-* Structured WebMCP tool schemas
-* WebMCP tool discovery
-* WebMCP tool execution
-* Consequential action protected by human approval
-* Deliberate prompt-injection scenario
-* Verification after remediation
-* Deterministic security receipt
-* Public-source license
-* Public HTTPS deployment
-* Under-3-minute demo
-* Dated commits showing work completed during the challenge
+## Verification and receipt
 
-## Project Status
+After an approved remediation, deterministic verification can produce:
 
-AgentFence is a hackathon MVP demonstrating a security architecture for agent-accessible web capabilities.
+- Repository: `FIXED`
+- Verification: `PASS`
+- Tests: `12 passed / 0 failed`
 
-The current implementation focuses on one concrete scenario:
+The security receipt records the finding, patch, policy/approval decision, verification result, tests, commit, and timestamp.
 
-**AI agent → repository investigation → untrusted content → proposed remediation → policy boundary → human approval → verification → security receipt**
+## Hackathon checklist
 
-The architecture is intentionally small and deterministic so the security boundary is easy to inspect and demonstrate.
-
-## What's Next
-
-Potential future directions include:
-
-* Connecting AgentFence to real repositories.
-* Expanding the policy engine beyond repository remediation.
-* Supporting richer risk classifications.
-* Adding organization-level policies.
-* Adding audit and compliance workflows.
-* Extending the model to other consequential WebMCP capabilities.
-* Integrating AgentFence with production agent gateways and enterprise authorization systems.
-
-## License
-
-This project is open source under the license included in this repository.
-
+- [x] Native `document.modelContext.registerTool(...)`
+- [x] Structured WebMCP schemas
+- [x] WebMCP discovery and execution harness
+- [x] Explicit `analyze_dataflow` WebMCP step in the primary agent path
+- [x] Silver-One-style deterministic C dataflow evidence
+- [x] Consequential action protected by human approval
+- [x] Deliberate instruction-injection scenario
+- [x] Independent patch analysis

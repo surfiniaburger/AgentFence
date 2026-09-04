@@ -7,7 +7,7 @@ export default function ToolRegistry() {
 
   const status = {
     checking: ["CHECKING", "text-slate-300"],
-    registered: ["8 TOOLS REGISTERED", "text-emerald-300"],
+    registered: [`${toolDefinitions.length} TOOLS REGISTERED`, "text-emerald-300"],
     unavailable: ["WEBMCP UNAVAILABLE", "text-amber-300"],
     error: ["REGISTRATION ERROR", "text-red-300"],
   }[webmcpStatus];
@@ -27,14 +27,15 @@ export default function ToolRegistry() {
       <div className="space-y-2">
         {toolDefinitions.map((tool) => {
           const write = tool.name === "apply_fix";
+          const evidence = tool.name === "analyze_dataflow";
           return (
             <div key={tool.name} className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2">
               <div>
                 <div className="text-sm font-medium">{tool.name}</div>
                 <div className="text-[11px] text-slate-500">{tool.title}</div>
               </div>
-              <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${write ? "bg-red-500/10 text-red-300" : "bg-emerald-500/10 text-emerald-300"}`}>
-                {write ? "WRITE" : "READ"}
+              <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${write ? "bg-red-500/10 text-red-300" : evidence ? "bg-violet-500/10 text-violet-300" : "bg-emerald-500/10 text-emerald-300"}`}>
+                {write ? "WRITE" : evidence ? "EVIDENCE" : "READ"}
               </span>
             </div>
           );

@@ -16,5 +16,6 @@
   "devDependencies": {
     "@tailwindcss/postcss": "latest",
     "tailwindcss": "latest"
-  }
+  },
+  "type": "module"
 }
